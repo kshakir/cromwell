@@ -84,7 +84,7 @@ object StandardCacheHitCopyingActor {
     override def cacheHit: CallCachingEntryId = copyCommand.cacheHit
     // This method is called to determine the remaining IO commands. Location checking only issues one IO command so
     // there are no more commands, return `AllCommandsDone`.
-    override def commandComplete(command: IoCommand[_]): (this.type, CommandSetState) = (this, AllCommandsDone)
+    override def commandComplete(command: IoCommand[_]): (this.type, CommandSetState) = (this.asInstanceOf[this.type], AllCommandsDone)
   }
 
   case class CacheHitCopyingData(commandsToWaitFor: List[Set[IoCommand[_]]],
@@ -98,19 +98,19 @@ object StandardCacheHitCopyingActor {
       */
     override def commandComplete(command: IoCommand[_]): (this.type, CommandSetState) = commandsToWaitFor match {
       // If everything was already done send back current data and AllCommandsDone
-      case Nil => (this, AllCommandsDone)
+      case Nil => (this.asInstanceOf[this.type], AllCommandsDone)
       case lastSubset :: Nil =>
         val updatedSubset = lastSubset - command
         // If the last subset is now empty, we're done
-        if (updatedSubset.isEmpty) (this.copy(commandsToWaitFor = List.empty), AllCommandsDone)
+        if (updatedSubset.isEmpty) (this.copy(commandsToWaitFor = List.empty).asInstanceOf[this.type], AllCommandsDone)
         // otherwise update commandsToWaitFor and keep waiting
-        else (this.copy(commandsToWaitFor = List(updatedSubset)), StillWaiting)
+        else (this.copy(commandsToWaitFor = List(updatedSubset)).asInstanceOf[this.type], StillWaiting)
       case currentSubset :: otherSubsets =>
         val updatedSubset = currentSubset - command
         // This subset is done but there are other ones, remove it from commandsToWaitFor and return the next round of commands
-        if (updatedSubset.isEmpty) (this.copy(commandsToWaitFor = otherSubsets), NextSubSet(otherSubsets.head))
+        if (updatedSubset.isEmpty) (this.copy(commandsToWaitFor = otherSubsets).asInstanceOf[this.type], NextSubSet(otherSubsets.head))
         // otherwise update the head subset and keep waiting
-        else (this.copy(commandsToWaitFor = List(updatedSubset) ++ otherSubsets), StillWaiting)
+        else (this.copy(commandsToWaitFor = List(updatedSubset) ++ otherSubsets).asInstanceOf[this.type], StillWaiting)
     }
   }
 
@@ -154,13 +154,16 @@ abstract class StandardCacheHitCopyingActor(val standardParams: StandardCacheHit
   protected def locationCheckRequired: Boolean = false
 
   // Override to disallow copying from some locations.
-  protected def copyAllowedFromLocation(location: String): Boolean = true
+  protected def copyAllowedFromLocation(location: String): Boolean = {
+    log.warning(s"WILLY, in copyAllowedFromLocation, location is $location")
+    true
+  }
 
   // Override if location checking is configured to be non-strict.
   protected def locationCheckStrictMode: Boolean = true
 
   when(Idle) {
-    case Event(copyCommand @ CopyOutputsCommand(_, jobDetritus, cacheHit, _), None) =>
+    case Event(copyCommand @ CopyOutputsCommand(_, _, cacheHit, _), None) =>
       val (nextState, cacheReadType) =
         if (isSourceBlacklisted(cacheHit)) {
           // We don't want to log this because blacklisting is a common and expected occurrence.
@@ -169,7 +172,7 @@ abstract class StandardCacheHitCopyingActor(val standardParams: StandardCacheHit
           // We don't want to log this because blacklisting is a common and expected occurrence.
           (failAndStop(BlacklistSkip(MetricableCacheCopyErrorCategory.BucketBlacklisted)), ReadHitAndBucket)
         } else if (locationCheckRequired) {
-          val next = issueLocationCommand()
+          val next = issueLocationCommand(copyCommand)
           (next, ReadHitAndBucket)
         } else {
           val next = issueCopyCommands(copyCommand)
@@ -256,8 +259,8 @@ abstract class StandardCacheHitCopyingActor(val standardParams: StandardCacheHit
   whenUnhandled {
     case Event(AbortJobCommand, _) =>
       abort()
-    case Event(unexpected, _) =>
-      log.warning(s"Backend cache hit copying actor received an unexpected message: $unexpected in state $stateName")
+    case Event(unexpected, s) =>
+      log.warning(s"Backend cache hit copying actor received an unexpected message: $unexpected in state $stateName/$s")
       stay()
   }
 
@@ -414,12 +417,13 @@ abstract class StandardCacheHitCopyingActor(val standardParams: StandardCacheHit
 
   def sourcePathFromCopyOutputsCommand(command: CopyOutputsCommand): String = command.jobDetritusFiles.values.head
 
-  private def issueLocationCommand(): State = {
+  private def issueLocationCommand(copyCommand: CopyOutputsCommand): State = {
     val rcPath = jobPaths.detritusPaths(JobPaths.ReturnCodePathKey)
     commandBuilder.locationCommand(rcPath) match {
       case Success(command) =>
         sendIoCommand(command)
-        goto(CheckingCacheHitSourceLocation)
+        goto(CheckingCacheHitSourceLocation)using
+          Option(LocationCheckData(copyCommand))
       case Failure(e) =>
         failAndStop(CopyAttemptError(new Throwable(s"Error building location command for rc file path '$rcPath''", e)))
     }

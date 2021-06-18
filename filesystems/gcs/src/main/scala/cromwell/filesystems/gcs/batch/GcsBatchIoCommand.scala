@@ -4,8 +4,8 @@ import cats.implicits.catsSyntaxValidatedId
 import com.google.api.client.googleapis.json.GoogleJsonError
 import com.google.api.client.http.HttpHeaders
 import com.google.api.services.storage.StorageRequest
-import com.google.api.services.storage.model.{Objects, RewriteResponse, StorageObject}
-import com.google.cloud.storage.{BlobId, Bucket}
+import com.google.api.services.storage.model.{Objects, RewriteResponse, StorageObject, Bucket}
+import com.google.cloud.storage.{BlobId}
 import common.util.StringUtil._
 import common.validation.ErrorOr.ErrorOr
 import cromwell.core.io._
@@ -259,8 +259,12 @@ case class GcsBatchLocationCommand(override val file: GcsPath,
   }
   override def operation: StorageRequest[Bucket] = {
     System.err.println("Willy, in GcsBatchLocationCommand.operation")
-    file.apiStorage.buckets().get(blob.getBucket)
+    file.apiStorage.buckets().get(blob.getBucket).setUserProject(userProject)
   }
+
+  // override def operation: StorageRequest[StorageObject] = {
+  //   file.apiStorage.objects().get(blob.getBucket, blob.getName).setUserProject(userProject)
+  // }
 
   override def withUserProject: GcsBatchLocationCommand = this.copy(setUserProject = true)
   override def commandDescription: String = s"GcsBatchIsDirectoryCommand file '$file' setUserProject '$setUserProject'"

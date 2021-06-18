@@ -22,6 +22,8 @@ class PipelinesApiBackendCacheHitCopyingActor(standardParams: StandardCacheHitCo
     .as[PipelinesApiBackendInitializationData](standardParams.backendInitializationDataOption)
     .papiConfiguration.papiAttributes.cacheHitDuplicationStrategy
   
+  override protected def locationCheckRequired: Boolean = true
+
   override def processSimpletons(womValueSimpletons: Seq[WomValueSimpleton],
                                  sourceCallRootPath: Path,
                                 ): Try[(CallOutputs, Set[IoCommand[_]])] =
